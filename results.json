@@ -1,0 +1,63 @@
+{
+  "meta": {
+    "date": "2026-10-02",
+    "vm": "2cpu/8gb",
+    "runs": 5,
+    "versions": {
+      "g++": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+      "python": "Python 3.12.3",
+      "go": "go version go1.25.1 linux/amd64",
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+      "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+      "bend": "bend 2.0.34",
+      "grpcio": "1.84.0"
+    },
+    "notes": [
+      "Each program prints '<bench> <lang> <ms> <checksum>'; ms = compute wall time measured inside the program.",
+      "Median of 5 runs. Checksums must agree across languages per benchmark (checksums_agree).",
+      "C++ compiled with -O3 -march=native -ffp-contract=off -fopenmp; the -ffp-contract=off flag disables FMA contraction so checksums are bit-identical with Go/Rust/Python (strict IEEE-754 double rounding).",
+      "nbody uses 100 Euler steps (not 200000): the step count is tuned so CPython finishes in reasonable time; the workload is otherwise identical in all languages (same N=1024, dt, softening, LCG init, two-phase update).",
+      "Threading: 2 CPU cores; parallel benchmarks use all cores where natural (OpenMP/rayon/goroutines); Python is serial.",
+      "bend2 (Bend 2.0.34 installed OK): omitted from measurements -- Bend's Base library currently provides only U32/F32 numerics (no F64/U64), so the f64 workloads cannot be ported with checksum-identical results, and its tree-based Array makes a 1e8 sieve / JSON parsing impractical."
+    ]
+  },
+  "rpc": {
+    "payloads": [
+      "1KB",
+      "256KB"
+    ],
+    "grpc": {
+      "1KB": {
+        "latency_p50_ms": 0.393,
+        "latency_p99_ms": 1.271,
+        "seq_n": 2000,
+        "throughput_rps": 2375.3,
+        "conc_total": 11887
+      },
+      "256KB": {
+        "latency_p50_ms": 2.409,
+        "latency_p99_ms": 7.296,
+        "seq_n": 2000,
+        "throughput_rps": 640.1,
+        "conc_total": 3205
+      }
+    },
+    "rest": {
+      "1KB": {
+        "latency_p50_ms": 0.578,
+        "latency_p99_ms": 1.235,
+        "seq_n": 2000,
+        "throughput_rps": 1892.8,
+        "conc_total": 9720
+      },
+      "256KB": {
+        "latency_p50_ms": 0.695,
+        "latency_p99_ms": 3.491,
+        "seq_n": 2000,
+        "throughput_rps": 1275.8,
+        "conc_total": 6797
+      }
+    },
+    "notes": "Python localhost. gRPC: grpcio server (16 worker threads) over a Unix-domain socket (TCP localhost was unusable: this VM's egress proxy env vars hijack grpc's HTTP/2 client connections). REST: stdlib ThreadingHTTPServer on 127.0.0.1:8000, POST /echo. Sequential: 2000 calls, p50/p99 per-call latency. Concurrent: 8 clients x 5s, throughput req/s. Deterministic payload bytes (random.Random(1234))."
+  }
+}
