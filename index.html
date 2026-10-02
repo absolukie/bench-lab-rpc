@@ -155,9 +155,14 @@ function renderImpl(){
   const d = DATA[IMPLS[IMPL].key];
   const lat = [], tput = [];
   d.payloads.forEach(p=>{
+    // p50 pair adjacent, then p99 pair adjacent: every comparison sits side-by-side
     ["grpc","rest"].forEach(proto=>{
       lat.push({label:`${NAMES[proto]} ${p} p50`, value:d[proto][p].latency_p50_ms, color:RPC_COLORS[proto]});
+    });
+    ["grpc","rest"].forEach(proto=>{
       lat.push({label:`${NAMES[proto]} ${p} p99`, value:d[proto][p].latency_p99_ms, color:RPC_COLORS[proto], dash:true});
+    });
+    ["grpc","rest"].forEach(proto=>{
       tput.push({label:`${NAMES[proto]} ${p}`, value:d[proto][p].throughput_rps, color:RPC_COLORS[proto]});
     });
   });
