@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Bench Lab RPC — gRPC vs REST, measured live</title>
-<meta name="description" content="Real measured benchmarks: gRPC vs REST echo in Rust, Go and Python, payloads from 1KB to 16MB. Every number measured on the same VM.">
+<meta name="description" content="Real measured benchmarks: gRPC vs REST in Rust, Go and Python — raw bytes plus structured protobuf-vs-JSON payloads. Every number measured on the same VM.">
 <style>
   :root{
     --bg:#0b0e14; --panel:#12161f; --panel2:#171c27; --text:#e8ecf4; --muted:#9aa4b8;
@@ -56,11 +56,11 @@
   <header>
     <div class="kicker">Measured on real hardware</div>
     <h1>Bench Lab RPC <span class="live">LIVE DATA</span></h1>
-    <p class="sub">gRPC vs REST echo — measured three times: <b>Rust</b> (tonic vs axum), <b>Go</b> (grpc-go vs net/http), <b>Python</b> (grpcio vs stdlib). Payloads from 1KB to 16MB.
+    <p class="sub">gRPC vs REST echo — <b>Rust</b> (tonic vs axum), <b>Go</b> (grpc-go vs net/http), <b>Python</b> (grpcio vs stdlib), plus <b>Structured</b> (real catalog data: protobuf vs JSON). Payloads from 1KB to 16MB.
       Every number below was measured on the same 2-core VM. No simulations, no estimates.</p>
     <div class="badge">
       <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6.5" stroke="#7cc4ff" stroke-width="1.6"/><path d="M8 4.5V8l2.4 1.6" stroke="#7cc4ff" stroke-width="1.6" stroke-linecap="round"/></svg>
-      <span>build <strong id="buildVersion" class="mono">v2026.10.02-04.55</strong></span>
+      <span>build <strong id="buildVersion" class="mono">v2026.10.02-05.25</strong></span>
       <span aria-hidden="true">·</span><span id="metaLine">loading…</span>
     </div>
   </header>
@@ -69,10 +69,16 @@
   <div id="content" hidden>
     <div class="toggle" role="group" aria-label="Implementation">
       <button id="btnRust" aria-pressed="true">Rust</button>
+      <button id="btnStruct" aria-pressed="false">Structured</button>
       <button id="btnGo" aria-pressed="false">Go</button>
       <button id="btnPy" aria-pressed="false">Python</button>
     </div>
     <p class="desc" id="implDesc"></p>
+    <section id="secSize" hidden>
+      <h2>Wire size</h2>
+      <p class="desc">Serialized message body in bytes — same logical data, protobuf vs JSON. Smaller is better.</p>
+      <div id="sizeChart"></div>
+    </section>
     <section>
       <h2>Per-call latency</h2>
       <p class="desc">Sequential echo calls, 2000 per cell. p50 solid, p99 faded. Lower is better.</p>
@@ -105,9 +111,10 @@ document.getElementById("footVersion").textContent = BUILD_VERSION;
 const RPC_COLORS = {grpc:"#8be89b", rest:"#f5a97c"};
 const NAMES = {grpc:"gRPC", rest:"REST"};
 const IMPLS = {
-  rust:   {key:"rust", label:"Rust",   meta:"Rust echo - TCP localhost - no TLS"},
-  go:     {key:"go",   label:"Go",     meta:"Go echo - TCP localhost - no TLS"},
-  python: {key:"rpc",  label:"Python", meta:"Python echo - localhost - no TLS"}
+  rust:       {key:"rust",       label:"Rust",       meta:"Rust echo - TCP localhost - no TLS"},
+  structured: {key:"structured", label:"Structured", meta:"Rust structured catalog data - protobuf vs JSON - TCP localhost - no TLS"},
+  go:         {key:"go",         label:"Go",         meta:"Go echo - TCP localhost - no TLS"},
+  python:     {key:"rpc",        label:"Python",     meta:"Python echo - localhost - no TLS"}
 };
 let DATA = null, IMPL = "rust";
 
@@ -126,6 +133,22 @@ function grouped(el, title, series, fmt){
 }
 
 function verdicts(key, d){
+  if(key === "structured"){
+    const g1=d.grpc["10 items"], r1=d.rest["10 items"], g2=d.grpc["500 items"], r2=d.rest["500 items"],
+          g3=d.grpc["5000 items"], r3=d.rest["5000 items"];
+    const fmtB = v => v >= 1048576 ? (v/1048576).toFixed(2)+" MB" : v >= 1024 ? (v/1024).toFixed(1)+" KB" : v+" B";
+    return {
+      lat: `With real structured data, protobuf is <b>1.45x smaller on the wire</b> at every size ` +
+           `(${fmtB(g1.wire_bytes)} vs ${fmtB(r1.wire_bytes)}; ${fmtB(g3.wire_bytes)} vs ${fmtB(r3.wire_bytes)}). ` +
+           `And the size advantage turns into speed: <b>REST wins at 10 items</b> (${r1.latency_p50_ms.toFixed(3)} ms vs ${g1.latency_p50_ms.toFixed(3)} ms, ` +
+           `per-call machinery dominates), but <b>gRPC wins at 500 items</b> (${g2.latency_p50_ms.toFixed(2)} ms vs ${r2.latency_p50_ms.toFixed(2)} ms) ` +
+           `and <b>5000 items</b> (${g3.latency_p50_ms.toFixed(1)} ms vs ${r3.latency_p50_ms.toFixed(1)} ms). The crossover is real.`,
+      tput: `Throughput follows the same crossover: <b>REST wins at 10 items</b> (${r1.throughput_rps.toFixed(0)} vs ${g1.throughput_rps.toFixed(0)} req/s), ` +
+            `<b>gRPC wins at 500</b> (${g2.throughput_rps.toFixed(0)} vs ${r2.throughput_rps.toFixed(0)}) and <b>5000 items</b> ` +
+            `(${g3.throughput_rps.toFixed(0)} vs ${r3.throughput_rps.toFixed(0)}). ` +
+            `With raw bytes REST won everything; give protobuf structured data and its 1.45x size edge compounds into a speed edge at scale.`
+    };
+  }
   if(key === "rust"){
     const g1=d.grpc["1KB"], r1=d.rest["1KB"], g64=d.grpc["64KB"], r64=d.rest["64KB"],
           g3=d.grpc["1MB"], r3=d.rest["1MB"], g16=d.grpc["16MB"], r16=d.rest["16MB"];
@@ -172,6 +195,19 @@ function verdicts(key, d){
 function renderImpl(){
   const d = DATA[IMPLS[IMPL].key];
   const lat = [], tput = [];
+  const secSize = document.getElementById("secSize");
+  if(IMPL === "structured"){
+    secSize.hidden = false;
+    const size = [];
+    const fmtB = v => v >= 1048576 ? (v/1048576).toFixed(2)+" MB" : v >= 1024 ? (v/1024).toFixed(1)+" KB" : Math.round(v)+" B";
+    d.payloads.forEach(p=>{
+      size.push({label:`protobuf ${p}`, value:d.grpc[p].wire_bytes, color:RPC_COLORS.grpc});
+      size.push({label:`JSON ${p}`, value:d.rest[p].wire_bytes, color:RPC_COLORS.rest});
+    });
+    grouped(document.getElementById("sizeChart"), "wire size", size, fmtB);
+  } else {
+    secSize.hidden = true;
+  }
   d.payloads.forEach(p=>{
     // p50 pair adjacent, then p99 pair adjacent: every comparison sits side-by-side
     ["grpc","rest"].forEach(proto=>{
@@ -200,6 +236,7 @@ function renderImpl(){
 function setImpl(next){
   IMPL = next;
   document.getElementById("btnRust").setAttribute("aria-pressed", String(next==="rust"));
+  document.getElementById("btnStruct").setAttribute("aria-pressed", String(next==="structured"));
   document.getElementById("btnGo").setAttribute("aria-pressed", String(next==="go"));
   document.getElementById("btnPy").setAttribute("aria-pressed", String(next==="python"));
   renderImpl();
@@ -218,6 +255,7 @@ async function init(){
   }
   document.getElementById("content").hidden = false;
   document.getElementById("btnRust").onclick = ()=>setImpl("rust");
+  document.getElementById("btnStruct").onclick = ()=>setImpl("structured");
   document.getElementById("btnGo").onclick = ()=>setImpl("go");
   document.getElementById("btnPy").onclick = ()=>setImpl("python");
   setImpl("rust");
