@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Bench Lab RPC — gRPC vs REST, measured live</title>
-<meta name="description" content="Real measured benchmarks: gRPC vs REST echo in Go and Python, payloads from 1KB to 16MB. Every number measured on the same VM.">
+<meta name="description" content="Real measured benchmarks: gRPC vs REST echo in Rust, Go and Python, payloads from 1KB to 16MB. Every number measured on the same VM.">
 <style>
   :root{
     --bg:#0b0e14; --panel:#12161f; --panel2:#171c27; --text:#e8ecf4; --muted:#9aa4b8;
@@ -56,11 +56,11 @@
   <header>
     <div class="kicker">Measured on real hardware</div>
     <h1>Bench Lab RPC <span class="live">LIVE DATA</span></h1>
-    <p class="sub">gRPC vs REST echo — measured twice: in <b>Go</b> (grpc-go vs net/http, 1KB to 16MB) and in <b>Python</b> (grpcio vs stdlib, 1KB/256KB).
+    <p class="sub">gRPC vs REST echo — measured three times: <b>Rust</b> (tonic vs axum), <b>Go</b> (grpc-go vs net/http), <b>Python</b> (grpcio vs stdlib). Payloads from 1KB to 16MB.
       Every number below was measured on the same 2-core VM. No simulations, no estimates.</p>
     <div class="badge">
       <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6.5" stroke="#7cc4ff" stroke-width="1.6"/><path d="M8 4.5V8l2.4 1.6" stroke="#7cc4ff" stroke-width="1.6" stroke-linecap="round"/></svg>
-      <span>build <strong id="buildVersion" class="mono">v2026.10.02-04.45</strong></span>
+      <span>build <strong id="buildVersion" class="mono">v2026.10.02-04.55</strong></span>
       <span aria-hidden="true">·</span><span id="metaLine">loading…</span>
     </div>
   </header>
@@ -68,7 +68,8 @@
   <div id="loadError"></div>
   <div id="content" hidden>
     <div class="toggle" role="group" aria-label="Implementation">
-      <button id="btnGo" aria-pressed="true">Go</button>
+      <button id="btnRust" aria-pressed="true">Rust</button>
+      <button id="btnGo" aria-pressed="false">Go</button>
       <button id="btnPy" aria-pressed="false">Python</button>
     </div>
     <p class="desc" id="implDesc"></p>
@@ -104,10 +105,11 @@ document.getElementById("footVersion").textContent = BUILD_VERSION;
 const RPC_COLORS = {grpc:"#8be89b", rest:"#f5a97c"};
 const NAMES = {grpc:"gRPC", rest:"REST"};
 const IMPLS = {
-  go:     {key:"go",  label:"Go",     meta:"Go echo - TCP localhost - no TLS"},
-  python: {key:"rpc", label:"Python", meta:"Python echo - localhost - no TLS"}
+  rust:   {key:"rust", label:"Rust",   meta:"Rust echo - TCP localhost - no TLS"},
+  go:     {key:"go",   label:"Go",     meta:"Go echo - TCP localhost - no TLS"},
+  python: {key:"rpc",  label:"Python", meta:"Python echo - localhost - no TLS"}
 };
-let DATA = null, IMPL = "go";
+let DATA = null, IMPL = "rust";
 
 function grouped(el, title, series, fmt){
   const W=640,rowH=30,top=8,labelW=128,valW=110,padR=8,plotW=W-labelW-valW-padR;
@@ -124,6 +126,22 @@ function grouped(el, title, series, fmt){
 }
 
 function verdicts(key, d){
+  if(key === "rust"){
+    const g1=d.grpc["1KB"], r1=d.rest["1KB"], g64=d.grpc["64KB"], r64=d.rest["64KB"],
+          g3=d.grpc["1MB"], r3=d.rest["1MB"], g16=d.grpc["16MB"], r16=d.rest["16MB"];
+    return {
+      lat: `In Rust, <b>REST (axum) beats gRPC (tonic) on latency at every payload size</b> - 1KB is a tie ` +
+           `(${g1.latency_p50_ms.toFixed(3)} ms vs ${r1.latency_p50_ms.toFixed(3)} ms), then REST pulls away: 64KB ` +
+           `<b>${(g64.latency_p50_ms/r64.latency_p50_ms).toFixed(1)}x</b> faster, 1MB <b>${(g3.latency_p50_ms/r3.latency_p50_ms).toFixed(1)}x</b> faster, ` +
+           `16MB <b>${(g16.latency_p50_ms/r16.latency_p50_ms).toFixed(1)}x</b> faster. ` +
+           `Same protocols as the Go test, opposite winner - at these scales you are benchmarking <b>libraries, not protocols</b>.`,
+      tput: `Throughput is no contest: <b>REST wins at all four sizes</b> - 1KB: ${r1.throughput_rps.toFixed(0)} vs ${g1.throughput_rps.toFixed(0)} req/s; ` +
+            `64KB: ${r64.throughput_rps.toFixed(0)} vs ${g64.throughput_rps.toFixed(0)}; 1MB: ${r3.throughput_rps.toFixed(0)} vs ${g3.throughput_rps.toFixed(0)}; ` +
+            `16MB: ${r16.throughput_rps.toFixed(0)} vs ${g16.throughput_rps.toFixed(0)}. ` +
+            `Config notes: tonic has the same <b>4MB default cap</b> as grpc-go (16MB run needed it raised); ` +
+            `axum rejects bodies over <b>2MB by default</b> (<span class="mono">DefaultBodyLimit</span>), disabled for the 16MB run.`
+    };
+  }
   if(key === "go"){
     const g1=d.grpc["1KB"], r1=d.rest["1KB"], g3=d.grpc["1MB"], r3=d.rest["1MB"],
           g16=d.grpc["16MB"], r16=d.rest["16MB"], g64=d.grpc["64KB"], r64=d.rest["64KB"];
@@ -181,6 +199,7 @@ function renderImpl(){
 
 function setImpl(next){
   IMPL = next;
+  document.getElementById("btnRust").setAttribute("aria-pressed", String(next==="rust"));
   document.getElementById("btnGo").setAttribute("aria-pressed", String(next==="go"));
   document.getElementById("btnPy").setAttribute("aria-pressed", String(next==="python"));
   renderImpl();
@@ -198,9 +217,10 @@ async function init(){
     return;
   }
   document.getElementById("content").hidden = false;
+  document.getElementById("btnRust").onclick = ()=>setImpl("rust");
   document.getElementById("btnGo").onclick = ()=>setImpl("go");
   document.getElementById("btnPy").onclick = ()=>setImpl("python");
-  setImpl("go");
+  setImpl("rust");
 }
 init();
 </script>
