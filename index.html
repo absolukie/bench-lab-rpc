@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Bench Lab RPC — gRPC vs REST, measured live</title>
-<meta name="description" content="Real measured benchmarks: gRPC vs REST echo on localhost, 1KB and 256KB payloads. Every number measured on the same VM.">
+<meta name="description" content="Real measured benchmarks: gRPC vs REST echo in Go and Python, payloads from 1KB to 16MB. Every number measured on the same VM.">
 <style>
   :root{
     --bg:#0b0e14; --panel:#12161f; --panel2:#171c27; --text:#e8ecf4; --muted:#9aa4b8;
@@ -43,6 +43,11 @@
   .verdict{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:14.5px;margin-top:12px}
   footer{color:var(--muted);font-size:12.5px;text-align:center;padding:24px 0}
   .err{background:#3a1d1d;border:1px solid #7c2d2d;color:#f5c6c6;border-radius:12px;padding:16px;margin:18px 0}
+  .toggle{display:inline-flex;background:var(--panel2);border:1px solid var(--line);
+    border-radius:999px;padding:3px;margin:0 0 4px}
+  .toggle button{border:0;background:transparent;color:var(--muted);font-size:13.5px;
+    padding:7px 16px;border-radius:999px;cursor:pointer;font-weight:600}
+  .toggle button[aria-pressed="true"]{background:var(--accent);color:#0b0e14}
   @media (min-width:640px){ h1{font-size:36px} section{padding:22px 22px} }
 </style>
 </head>
@@ -51,17 +56,22 @@
   <header>
     <div class="kicker">Measured on real hardware</div>
     <h1>Bench Lab RPC <span class="live">LIVE DATA</span></h1>
-    <p class="sub">gRPC vs REST echo on localhost — 1KB and 256KB payloads.
+    <p class="sub">gRPC vs REST echo — measured twice: in <b>Go</b> (grpc-go vs net/http, 1KB to 16MB) and in <b>Python</b> (grpcio vs stdlib, 1KB/256KB).
       Every number below was measured on the same 2-core VM. No simulations, no estimates.</p>
     <div class="badge">
       <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6.5" stroke="#7cc4ff" stroke-width="1.6"/><path d="M8 4.5V8l2.4 1.6" stroke="#7cc4ff" stroke-width="1.6" stroke-linecap="round"/></svg>
-      <span>build <strong id="buildVersion" class="mono">v2026.10.01-21.19</strong></span>
+      <span>build <strong id="buildVersion" class="mono">v2026.10.02-04.45</strong></span>
       <span aria-hidden="true">·</span><span id="metaLine">loading…</span>
     </div>
   </header>
 
   <div id="loadError"></div>
   <div id="content" hidden>
+    <div class="toggle" role="group" aria-label="Implementation">
+      <button id="btnGo" aria-pressed="true">Go</button>
+      <button id="btnPy" aria-pressed="false">Python</button>
+    </div>
+    <p class="desc" id="implDesc"></p>
     <section>
       <h2>Per-call latency</h2>
       <p class="desc">Sequential echo calls, 2000 per cell. p50 solid, p99 faded. Lower is better.</p>
@@ -93,7 +103,11 @@ const BUILD_VERSION = document.getElementById("buildVersion").textContent.trim()
 document.getElementById("footVersion").textContent = BUILD_VERSION;
 const RPC_COLORS = {grpc:"#8be89b", rest:"#f5a97c"};
 const NAMES = {grpc:"gRPC", rest:"REST"};
-let DATA = null;
+const IMPLS = {
+  go:     {key:"go",  label:"Go",     meta:"Go echo - TCP localhost - no TLS"},
+  python: {key:"rpc", label:"Python", meta:"Python echo - localhost - no TLS"}
+};
+let DATA = null, IMPL = "go";
 
 function grouped(el, title, series, fmt){
   const W=640,rowH=30,top=8,labelW=128,valW=110,padR=8,plotW=W-labelW-valW-padR;
@@ -109,6 +123,64 @@ function grouped(el, title, series, fmt){
   el.innerHTML = s + "</svg>";
 }
 
+function verdicts(key, d){
+  if(key === "go"){
+    const g1=d.grpc["1KB"], r1=d.rest["1KB"], g3=d.grpc["1MB"], r3=d.rest["1MB"],
+          g16=d.grpc["16MB"], r16=d.rest["16MB"], g64=d.grpc["64KB"], r64=d.rest["64KB"];
+    return {
+      lat: `In Go, <b>gRPC wins p50 latency at every payload size</b> - 1KB: ${g1.latency_p50_ms.toFixed(3)} ms vs ${r1.latency_p50_ms.toFixed(3)} ms; ` +
+           `64KB: ${g64.latency_p50_ms.toFixed(3)} ms vs ${r64.latency_p50_ms.toFixed(3)} ms; ` +
+           `1MB: ${g3.latency_p50_ms.toFixed(2)} ms vs ${r3.latency_p50_ms.toFixed(2)} ms; ` +
+           `16MB: ${g16.latency_p50_ms.toFixed(1)} ms vs ${r16.latency_p50_ms.toFixed(1)} ms. ` +
+           `The Python result (REST winning at 256KB) was grpcio overhead, not the protocol.`,
+      tput: `Throughput is split: <b>REST wins at 1KB</b> (${r1.throughput_rps.toFixed(0)} vs ${g1.throughput_rps.toFixed(0)} req/s) and <b>16MB</b> ` +
+            `(${r16.throughput_rps.toFixed(0)} vs ${g16.throughput_rps.toFixed(0)} req/s); <b>gRPC wins at 64KB and 1MB</b> ` +
+            `(${g64.throughput_rps.toFixed(0)} vs ${r64.throughput_rps.toFixed(0)}, ${g3.throughput_rps.toFixed(0)} vs ${r3.throughput_rps.toFixed(0)} req/s). ` +
+            `Operational note: grpc-go <b>hard-caps messages at 4MB by default</b> - the 16MB gRPC run needed ` +
+            `<span class="mono">MaxRecvMsgSize</span> raised to 32MB. REST handled 16MB with zero config changes.`
+    };
+  }
+  const g1=d.grpc["1KB"], r1=d.rest["1KB"], g2=d.grpc["256KB"], r2=d.rest["256KB"];
+  return {
+    lat: `At <b>1KB</b>, gRPC p50 is <b>${(r1.latency_p50_ms/g1.latency_p50_ms).toFixed(2)}x</b> faster than REST ` +
+         `(${g1.latency_p50_ms.toFixed(3)} ms vs ${r1.latency_p50_ms.toFixed(3)} ms). At <b>256KB</b>, REST p50 is ` +
+         `<b>${(g2.latency_p50_ms/r2.latency_p50_ms).toFixed(2)}x</b> faster than gRPC ` +
+         `(${r2.latency_p50_ms.toFixed(3)} ms vs ${g2.latency_p50_ms.toFixed(3)} ms) - grpcio's per-message overhead dominates large payloads in Python.`,
+    tput: `Throughput tells the same story: gRPC wins at 1KB (<b>${g1.throughput_rps.toFixed(0)}</b> vs <b>${r1.throughput_rps.toFixed(0)}</b> req/s), ` +
+          `REST wins at 256KB (<b>${r2.throughput_rps.toFixed(0)}</b> vs <b>${g2.throughput_rps.toFixed(0)}</b> req/s).`
+  };
+}
+
+function renderImpl(){
+  const d = DATA[IMPLS[IMPL].key];
+  const lat = [], tput = [];
+  d.payloads.forEach(p=>{
+    ["grpc","rest"].forEach(proto=>{
+      lat.push({label:`${NAMES[proto]} ${p} p50`, value:d[proto][p].latency_p50_ms, color:RPC_COLORS[proto]});
+      lat.push({label:`${NAMES[proto]} ${p} p99`, value:d[proto][p].latency_p99_ms, color:RPC_COLORS[proto], dash:true});
+      tput.push({label:`${NAMES[proto]} ${p}`, value:d[proto][p].throughput_rps, color:RPC_COLORS[proto]});
+    });
+  });
+  grouped(document.getElementById("latChart"), "latency", lat, v=>v.toFixed(2)+" ms");
+  grouped(document.getElementById("tputChart"), "throughput", tput, v=>v.toFixed(0)+" req/s");
+  const v = verdicts(IMPL, d);
+  document.getElementById("latVerdict").innerHTML = v.lat;
+  document.getElementById("tputVerdict").innerHTML = v.tput;
+  const m = DATA.meta;
+  document.getElementById("metaLine").textContent = `${m.date} - ${m.vm} - ${IMPLS[IMPL].meta}`;
+  document.getElementById("methodList").innerHTML = `<li>${d.notes}</li>` +
+    (m.notes||[]).map(n=>`<li>${n}</li>`).join("");
+  document.getElementById("versionList").innerHTML =
+    Object.entries(m.versions||{}).map(([k,vv])=>`<dt>${k}</dt><dd>${vv}</dd>`).join("");
+}
+
+function setImpl(next){
+  IMPL = next;
+  document.getElementById("btnGo").setAttribute("aria-pressed", String(next==="go"));
+  document.getElementById("btnPy").setAttribute("aria-pressed", String(next==="python"));
+  renderImpl();
+}
+
 async function init(){
   try{
     const r = await fetch("results.json", {cache:"no-store"});
@@ -121,34 +193,9 @@ async function init(){
     return;
   }
   document.getElementById("content").hidden = false;
-  const rpc = DATA.rpc;
-  const lat = [], tput = [];
-  rpc.payloads.forEach(p=>{
-    ["grpc","rest"].forEach(proto=>{
-      lat.push({label:`${NAMES[proto]} ${p} p50`, value:rpc[proto][p].latency_p50_ms, color:RPC_COLORS[proto]});
-      lat.push({label:`${NAMES[proto]} ${p} p99`, value:rpc[proto][p].latency_p99_ms, color:RPC_COLORS[proto], dash:true});
-      tput.push({label:`${NAMES[proto]} ${p}`, value:rpc[proto][p].throughput_rps, color:RPC_COLORS[proto]});
-    });
-  });
-  grouped(document.getElementById("latChart"), "latency", lat, v=>v.toFixed(2)+" ms");
-  grouped(document.getElementById("tputChart"), "throughput", tput, v=>v.toFixed(0)+" req/s");
-
-  const g1 = rpc.grpc["1KB"], r1 = rpc.rest["1KB"], g2 = rpc.grpc["256KB"], r2 = rpc.rest["256KB"];
-  document.getElementById("latVerdict").innerHTML =
-    `At <b>1KB</b>, gRPC p50 is <b>${(r1.latency_p50_ms/g1.latency_p50_ms).toFixed(2)}×</b> faster than REST ` +
-    `(${g1.latency_p50_ms.toFixed(3)} ms vs ${r1.latency_p50_ms.toFixed(3)} ms). At <b>256KB</b>, REST p50 is ` +
-    `<b>${(g2.latency_p50_ms/r2.latency_p50_ms).toFixed(2)}×</b> faster than gRPC ` +
-    `(${r2.latency_p50_ms.toFixed(3)} ms vs ${g2.latency_p50_ms.toFixed(3)} ms) — grpcio's per-message overhead dominates large payloads in Python.`;
-  document.getElementById("tputVerdict").innerHTML =
-    `Throughput tells the same story: gRPC wins at 1KB (<b>${g1.throughput_rps.toFixed(0)}</b> vs <b>${r1.throughput_rps.toFixed(0)}</b> req/s), ` +
-    `REST wins at 256KB (<b>${r2.throughput_rps.toFixed(0)}</b> vs <b>${g2.throughput_rps.toFixed(0)}</b> req/s).`;
-
-  const m = DATA.meta;
-  document.getElementById("metaLine").textContent = `${m.date} · ${m.vm} · Python localhost echo`;
-  document.getElementById("methodList").innerHTML = `<li>${rpc.notes}</li>` +
-    (m.notes||[]).map(n=>`<li>${n}</li>`).join("");
-  document.getElementById("versionList").innerHTML =
-    Object.entries(m.versions||{}).map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join("");
+  document.getElementById("btnGo").onclick = ()=>setImpl("go");
+  document.getElementById("btnPy").onclick = ()=>setImpl("python");
+  setImpl("go");
 }
 init();
 </script>

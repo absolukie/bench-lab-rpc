@@ -6,11 +6,13 @@
     "versions": {
       "g++": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
       "python": "Python 3.12.3",
-      "go": "go version go1.25.1 linux/amd64",
+      "go": "go1.25.1",
       "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
       "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
       "bend": "bend 2.0.34",
-      "grpcio": "1.84.0"
+      "grpcio": "1.84.0",
+      "grpc-go": "v1.84.0",
+      "protobuf-go": "v1.36.12"
     },
     "notes": [
       "Each program prints '<bench> <lang> <ms> <checksum>'; ms = compute wall time measured inside the program.",
@@ -59,5 +61,74 @@
       }
     },
     "notes": "Python localhost. gRPC: grpcio server (16 worker threads) over a Unix-domain socket (TCP localhost was unusable: this VM's egress proxy env vars hijack grpc's HTTP/2 client connections). REST: stdlib ThreadingHTTPServer on 127.0.0.1:8000, POST /echo. Sequential: 2000 calls, p50/p99 per-call latency. Concurrent: 8 clients x 5s, throughput req/s. Deterministic payload bytes (random.Random(1234))."
+  },
+  "go": {
+    "payloads": [
+      "1KB",
+      "64KB",
+      "1MB",
+      "16MB"
+    ],
+    "grpc": {
+      "1KB": {
+        "latency_p50_ms": 0.107,
+        "latency_p99_ms": 1.561,
+        "seq_n": 2000,
+        "throughput_rps": 18582.0,
+        "conc_total": 92910
+      },
+      "64KB": {
+        "latency_p50_ms": 0.385,
+        "latency_p99_ms": 1.853,
+        "seq_n": 2000,
+        "throughput_rps": 4328.0,
+        "conc_total": 21640
+      },
+      "1MB": {
+        "latency_p50_ms": 2.36,
+        "latency_p99_ms": 5.036,
+        "seq_n": 500,
+        "throughput_rps": 493.2,
+        "conc_total": 2466
+      },
+      "16MB": {
+        "latency_p50_ms": 29.183,
+        "latency_p99_ms": 104.21,
+        "seq_n": 100,
+        "throughput_rps": 10.8,
+        "conc_total": 54
+      }
+    },
+    "rest": {
+      "1KB": {
+        "latency_p50_ms": 0.087,
+        "latency_p99_ms": 0.261,
+        "seq_n": 2000,
+        "throughput_rps": 22825.4,
+        "conc_total": 114127
+      },
+      "64KB": {
+        "latency_p50_ms": 0.295,
+        "latency_p99_ms": 2.708,
+        "seq_n": 2000,
+        "throughput_rps": 2605.6,
+        "conc_total": 13028
+      },
+      "1MB": {
+        "latency_p50_ms": 6.045,
+        "latency_p99_ms": 16.358,
+        "seq_n": 500,
+        "throughput_rps": 213.6,
+        "conc_total": 1068
+      },
+      "16MB": {
+        "latency_p50_ms": 54.46,
+        "latency_p99_ms": 123.645,
+        "seq_n": 100,
+        "throughput_rps": 25.6,
+        "conc_total": 128
+      }
+    },
+    "notes": "Go echo benchmark on 2-CPU VM, localhost TCP, no TLS. gRPC: grpc-go server on 127.0.0.1:50051 via grpc.NewServer() with DEFAULT options; client: single grpc.ClientConn (grpc.NewClient + insecure credentials), reused across all calls. REST: net/http server on 127.0.0.1:8080 (default http.Server, no timeouts), POST /echo reads full body, writes it back with Content-Length; client: single http.Client with keep-alives (MaxIdleConnsPerHost=16), reused. Payload: deterministic bytes from math/rand seed 1234, verified byte-identical on every response (abort on mismatch). seq N: 2000 calls for 1KB/64KB, 500 for 1MB, 100 for 16MB. conc: 8 goroutine clients x 5s. Versions: go1.25.1, google.golang.org/grpc v1.84.0, google.golang.org/protobuf v1.36.12, protoc 31.1, protoc-gen-go v1.36.12, protoc-gen-go-grpc 1.6.2. CAVEAT: grpc-go defaults cap messages at 4MB, so 16MB echo FAILED with defaults (ResourceExhausted: received message larger than max 16777221 vs 4194304). The grpc 16MB figures are a bonus run on 127.0.0.1:50052 with ONLY MaxRecvMsgSize/MaxSendMsgSize raised to 32MB on both server and client call options; all other settings identical. REST handled 16MB with defaults."
   }
 }
